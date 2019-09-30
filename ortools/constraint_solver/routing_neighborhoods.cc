@@ -403,6 +403,145 @@ bool PairExchangeOperator::GetPreviousAndSibling(
   return *sibling_previous >= 0 && is_first_[node];
 }
 
+ListExchangeRelocateOperator::ListExchangeRelocateOperator(
+    const std::vector<IntVar*>& vars,
+    const std::vector<IntVar*>& secondary_vars,
+    std::function<int(int64)> start_empty_path_class,
+    const std::vector<int64>& periodic_visits)
+    : PathWithPreviousNodesOperator(vars, secondary_vars, 6,
+                                    std::move(start_empty_path_class)) {
+  frequency_ = periodic_visits.size();
+
+  int64 index_max = 0;
+  for (const IntVar* const var : vars) {
+    index_max = std::max(index_max, var->Max());
+  }
+  is_first_.resize(index_max + 1, false);
+  int64 max_index = -1;
+  // TODO(user): Support pairs with disjunctions.
+  for (const auto& periodic_visit : periodic_visits) {
+    max_index = std::max(max_index, periodic_visit);
+    // max_index = std::max(max_index, index_pair.second[0]);
+  }
+  pairs_.resize(max_index + 1, -1);
+  for (const auto& periodic_visit : periodic_visits) {
+    pairs_[periodic_visit] = periodic_visit;
+    // pairs_[index_pair.second[0]] = index_pair.first[0];
+    is_first_[periodic_visit] = true;
+  }
+}
+
+bool ListExchangeRelocateOperator::MakeNeighbor() {
+  // DCHECK_EQ(StartNode(kSecondPairFirstNodeDestination),
+  //           StartNode(kSecondPairSecondNodeDestination));
+  // DCHECK_EQ(StartNode(kSecondPairFirstNode),
+  //           StartNode(kFirstPairFirstNodeDestination));
+  // DCHECK_EQ(StartNode(kSecondPairFirstNode),
+  //           StartNode(kFirstPairSecondNodeDestination));
+
+  // if (StartNode(kFirstPairFirstNode) == StartNode(kSecondPairFirstNode)) {
+  //   SetNextBaseToIncrement(kSecondPairFirstNode);
+  //   return false;
+  // }
+  // Through this method, <base>[X][Y] represent the <base> variable for the
+  // node Y of pair X. <base> is in node, prev, dest.
+  int64 nodes[frequency_];
+  int64 prev[frequency_];
+  int64 dest[frequency_];
+
+  for (int i = 0; i < frequency_; ++i) {
+    nodes[i] = BaseNode(i);
+
+    if (!GetPreviousAndSibling(nodes[i], &prev[i], &nodes[i+1],
+                               &prev[i+1])) {
+      SetNextBaseToIncrement(i);
+      return false;
+    }
+
+    if (!LoadAndCheckDest(i, i+1, nodes, dest)) {
+      SetNextBaseToIncrement(dest[i]);
+      return false;
+    }
+
+    if (!MoveNode(i, nodes, dest, prev)) {
+      SetNextBaseToIncrement(dest[i]);
+      return false;
+    }
+  }
+
+  // auto last = std::unique(to_return.begin(), to_return.end());
+  // to_return.erase(last, to_return.end()); 
+
+  // nodes[0] = BaseNode(kFirstPairFirstNode);
+  // nodes1][0] = BaseNode(kSecondPairFirstNode);
+  // if (nodes[1][0] <= nodes[0][0]) {
+  //   // Exchange is symetric.
+  //   SetNextBaseToIncrement(kSecondPairFirstNode);
+  //   return false;
+  // }
+
+  // if (!GetPreviousAndSibling(nodes[0], &prev[0], &nodes[1],
+  //                            &prev[1])) {
+  //   SetNextBaseToIncrement(kFirstPairFirstNode);
+  //   return false;
+  // }
+
+  // if (!LoadAndCheckDest(0, kFirstPairFirstNodeDestination, nodes, dest)) {
+  //   SetNextBaseToIncrement(kFirstPairFirstNodeDestination);
+  //   return false;
+  // }
+  // if (!LoadAndCheckDest(1, kFirstPairSecondNodeDestination, nodes, dest)) {
+  //   SetNextBaseToIncrement(kFirstPairSecondNodeDestination);
+  //   return false;
+  // }
+
+  // if (!MoveNode(0, nodes, dest, prev)) {
+  //   SetNextBaseToIncrement(kFirstPairSecondNodeDestination);
+  //   return false;
+  // }
+  // if (!MoveNode(1, nodes, dest, prev)) {
+  //   return false;
+  // }
+  return true;
+}
+
+bool ListExchangeRelocateOperator::GetPreviousAndSibling(
+    int64 node, int64* previous, int64* sibling,
+    int64* sibling_previous) const {
+  if (IsPathStart(node)) return false;
+  *previous = Prev(node);
+  *sibling = node < pairs_.size() ? pairs_[node] : -1;
+  *sibling_previous = *sibling >= 0 ? Prev(*sibling) : -1;
+  return *sibling_previous >= 0 && is_first_[node];
+}
+
+bool ListExchangeRelocateOperator::MoveNode(int node,
+                                            int64 nodes[2], int64 dest[2],
+                                            int64 prev[2]) {
+  if (!MoveChain(prev[node], nodes[node], dest[node])) {
+    return false;
+  }
+  // Update the other pair if needed.
+  // for (int i = 0; i < 2; ++i) {
+    if (prev[node] == dest[node]) {
+      prev[node] = nodes[node];
+    }
+    // if (prev[1] == dest[node]) {
+    //   prev[1] = nodes[node];
+    // }
+  // }
+  return true;
+}
+
+bool ListExchangeRelocateOperator::LoadAndCheckDest(int node,
+                                                    int64 base_node,
+                                                    int64 nodes[2],
+                                                    int64 dest[2]) const {
+  dest[pair][node] = BaseNode(base_node);
+  // A destination cannot be a node that will be moved.
+  return !(nodes[node] == dest[node] || nodes[node] == dest[node]);
+}
+
 PairExchangeRelocateOperator::PairExchangeRelocateOperator(
     const std::vector<IntVar*>& vars,
     const std::vector<IntVar*>& secondary_vars,
@@ -933,6 +1072,67 @@ bool RelocateSubtrip::MakeNeighbor() {
   if (num_opened_pairs != 0) return false;
 
   return MoveChain(prev_chain, chain_end, insertion_node);
+}
+
+// TransformPeriodic::TransformPeriodic(
+//     const std::vector<IntVar*>& vars,
+//     const std::vector<IntVar*>& secondary_vars,
+//     std::function<int(int64)> start_empty_path_class,
+//     const std::vector<int64>& periodic_visits)
+//     : PathOperator(vars, secondary_vars, 2, false,
+//                    std::move(start_empty_path_class)) {
+//   is_first_node_.resize(number_of_nexts_, false);
+//   is_second_node_.resize(number_of_nexts_, false);
+//   pair_of_node_.resize(number_of_nexts_, -1);
+
+//   for (int index = 0; index < periodic_visits.size(); ++index) {
+
+//   }
+
+//   for (int pair_index = 0; pair_index < pairs.size(); ++pair_index) {
+//     for (const int node : pairs[pair_index].first) {
+//       is_first_node_[node] = true;
+//       pair_of_node_[node] = pair_index;
+//     }
+//     for (const int node : pairs[pair_index].second) {
+//       is_second_node_[node] = true;
+//       pair_of_node_[node] = pair_index;
+//     }
+//   }
+//   opened_pairs_set_.resize(pairs.size(), false);
+// }
+
+TransformPeriodic::TransformPeriodic(
+    const std::vector<IntVar*>& vars,
+    const std::vector<IntVar*>& secondary_vars,
+    std::function<int(int64)> start_empty_path_class, int num_arcs_to_consider,
+    std::function<int64(std::vector<int64>, std::vector<int64>, std::vector<int64>)> arcs_cost_for_paths_periodic)
+    : PathOperator(vars, secondary_vars, 1, false,
+                   std::move(start_empty_path_class)),
+      num_arcs_to_consider_(num_arcs_to_consider),
+      current_path_(0),
+      current_expensive_arc_indices_({-1, -1}),
+      arcs_cost_for_paths_periodic_(std::move(arcs_cost_for_paths_periodic)),
+      end_path_(0),
+      has_non_empty_paths_to_explore_(false) {}
+
+bool TransformPeriodic::MakeNeighbor() {
+  const int first_arc_index = current_expensive_arc_indices_.first;
+  const int second_arc_index = current_expensive_arc_indices_.second;
+  DCHECK_LE(0, first_arc_index);
+  DCHECK_LT(first_arc_index, second_arc_index);
+  DCHECK_LT(second_arc_index, most_expensive_arc_starts_and_ranks_.size());
+
+  const std::pair<int, int>& first_start_and_rank =
+      most_expensive_arc_starts_and_ranks_[first_arc_index];
+  const std::pair<int, int>& second_start_and_rank =
+      most_expensive_arc_starts_and_ranks_[second_arc_index];
+  if (first_start_and_rank.second < second_start_and_rank.second) {
+    return MoveChain(first_start_and_rank.first, second_start_and_rank.first,
+                     BaseNode(0));
+  }
+  return MoveChain(second_start_and_rank.first, first_start_and_rank.first,
+                   BaseNode(0));
 }
 
 }  // namespace operations_research

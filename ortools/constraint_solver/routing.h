@@ -605,6 +605,10 @@ class RoutingModel {
   // operators, in the context of arc-based routing.
   void IgnoreDisjunctionsAlreadyForcedToZero();
 
+  void AddPeriodicVisit(const std::vector<int64> periodic_visits);
+
+  void AddPerriodicVisitSetsInternal(const std::vector<int64> periodic_visits);
+
   // Adds a soft contraint to force a set of variable indices to be on the same
   // vehicle. If all nodes are not on the same vehicle, each extra vehicle used
   // adds 'cost' to the cost function.
@@ -1178,6 +1182,7 @@ class RoutingModel {
     TWO_OPT,
     OR_OPT,
     RELOCATE_EXPENSIVE_CHAIN,
+    TRANSFORM_PERIODIC,
     LIN_KERNIGHAN,
     TSP_OPT,
     MAKE_ACTIVE,
@@ -1457,6 +1462,9 @@ class RoutingModel {
 #endif  // SWIG
   // Pickup and delivery
   IndexPairs pickup_delivery_pairs_;
+
+  std::vector<std::vector<int64>>& all_periodic_visits_;
+
   std::vector<std::pair<DisjunctionIndex, DisjunctionIndex>>
       pickup_delivery_disjunctions_;
   // clang-format off

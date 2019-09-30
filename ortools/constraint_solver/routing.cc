@@ -554,6 +554,27 @@ LocalSearchOperator* MakePairExchangeRelocate(
       vars, secondary_vars, std::move(start_empty_path_class), pairs));
 }
 
+LocalSearchOperator* MakeListExchangeRelocate(
+    Solver* const solver, const std::vector<IntVar*>& vars,
+    const std::vector<IntVar*>& secondary_vars,
+    std::function<int(int64)> start_empty_path_class,
+    const std::vector<std::vector<int64>>& all_periodic_visits) {
+  std::vector<operations_research::LocalSearchOperator*> to_return;
+  for (int i = 0; i<all_periodic_visits.size(); i++) {
+    to_return.push_back(solver->RevAlloc(new ListExchangeRelocateOperator(
+      vars, secondary_vars, std::move(start_empty_path_class),
+      all_periodic_visits[i])));
+  }
+  auto last = std::unique(to_return.begin(), to_return.end());
+  to_return.erase(last, to_return.end());
+  if (to_return.size() == 2/* || to_return[0] == false*/){
+    return to_return[0];
+  } else {
+    return to_return[0];
+  }
+
+}
+
 LocalSearchOperator* SwapIndexPair(Solver* const solver,
                                    const std::vector<IntVar*>& vars,
                                    const std::vector<IntVar*>& secondary_vars,
@@ -592,6 +613,14 @@ LocalSearchOperator* MakeRelocateSubtrip(
       vars, secondary_vars, std::move(start_empty_path_class), pairs));
 }
 
+LocalSearchOperator* MakeTransformPeriodic(
+    Solver* const solver, const std::vector<IntVar*>& vars,
+    const std::vector<IntVar*>& secondary_vars,
+    std::function<int(int64)> start_empty_path_periodic_class,
+    const std::vector<int64>& periodic_visits) {
+
+}
+
 // Evaluators
 template <class A, class B>
 static int64 ReturnZero(A a, B b) {
@@ -626,6 +655,7 @@ RoutingModel::RoutingModel(const RoutingIndexManager& index_manager)
 RoutingModel::RoutingModel(const RoutingIndexManager& index_manager,
                            const RoutingModelParameters& parameters)
     : nodes_(index_manager.num_nodes()),
+      all_periodic_visits_(all_periodic_visits_),
       vehicles_(index_manager.num_vehicles()),
       fixed_cost_of_vehicle_(vehicles_, 0),
       cost_class_index_of_vehicle_(vehicles_, CostClassIndex(-1)),
@@ -1438,6 +1468,18 @@ void RoutingModel::AddPickupAndDeliverySetsInternal(
                                                           delivery_index);
   }
   pickup_delivery_pairs_.push_back({pickups, deliveries});
+}
+
+void RoutingModel::AddPeriodicVisit(const std::vector<int64> periodic_visits) {
+  AddPerriodicVisitSetsInternal(periodic_visits);
+}
+
+void RoutingModel::AddPerriodicVisitSetsInternal(const std::vector<int64> periodic_visits) {
+  if (periodic_visits.empty()) {
+    return;
+  }
+
+  all_periodic_visits_.push_back(periodic_visits);
 }
 
 const std::vector<std::pair<int, int>>& RoutingModel::GetPickupIndexPairs(
@@ -3911,6 +3953,10 @@ void RoutingModel::CreateNeighborhoodOperators(
       solver_.get(), nexts_,
       CostsAreHomogeneousAcrossVehicles() ? empty : vehicle_vars_,
       vehicle_start_class_callback_, pickup_delivery_pairs_);
+  local_search_operators_[EXCHANGE_RELOCATE_PAIR] = MakeListExchangeRelocate(
+      solver_.get(), active_,
+      CostsAreHomogeneousAcrossVehicles() ? empty : vehicle_vars_,
+      vehicle_start_class_callback_, all_periodic_visits_);
   local_search_operators_[RELOCATE_NEIGHBORS] = MakeRelocateNeighbors(
       solver_.get(), nexts_,
       CostsAreHomogeneousAcrossVehicles() ? empty : vehicle_vars_,
@@ -3934,6 +3980,16 @@ void RoutingModel::CreateNeighborhoodOperators(
         return GetArcCostForVehicle(before_node, after_node,
                                     index_to_vehicle_[start_index]);
       };
+
+  const auto arcs_cost_for_paths_periodic =
+      [this](std::vector<int64> before_nodes, std::vector<int64> after_nodes, std::vector<int64> starts_index) {
+        int64 cost = 0;
+        for (int64 i = 0; i < starts_index.size(); ++i) {
+          cost += GetArcCostForVehicle(before_nodes[i], after_nodes[i], index_to_vehicle_[starts_index[i]]);
+        }
+        return cost;
+      };
+
   local_search_operators_[RELOCATE_EXPENSIVE_CHAIN] =
       solver_->RevAlloc(new RelocateExpensiveChain(
           nexts_, CostsAreHomogeneousAcrossVehicles() ? empty : vehicle_vars_,
@@ -3944,6 +4000,18 @@ void RoutingModel::CreateNeighborhoodOperators(
       solver_.get(), nexts_,
       CostsAreHomogeneousAcrossVehicles() ? empty : vehicle_vars_,
       vehicle_start_class_callback_, pickup_delivery_pairs_);
+  local_search_operators_[TRANSFORM_PERIODIC] =
+      solver_->RevAlloc(new TransformPeriodic(
+          nexts_, CostsAreHomogeneousAcrossVehicles() ? empty : vehicle_vars_,
+          vehicle_start_class_callback_,
+          parameters.relocate_expensive_chain_num_arcs_to_consider(),
+          arcs_cost_for_paths_periodic));
+
+
+  // MakeTransformPeriodic(
+  //     solver_.get(), nexts_,
+  //     CostsAreHomogeneousAcrossVehicles() ? empty : vehicle_vars_,
+  //     vehicle_start_class_callback_, all_periodic_visits_);
 
   CP_ROUTING_ADD_OPERATOR2(EXCHANGE, Exchange);
   CP_ROUTING_ADD_OPERATOR2(CROSS, Cross);
@@ -4700,6 +4768,9 @@ void RoutingModel::SetupMetaheuristics(
   const int64 optimization_step = std::max(
       MathUtil::FastInt64Round(search_parameters.optimization_step()), One());
   switch (metaheuristic) {
+    // case LocalSearchMetaheuristic::CYCLIC_TRANSFER:
+
+      // break;
     case LocalSearchMetaheuristic::GUIDED_LOCAL_SEARCH:
       if (CostsAreHomogeneousAcrossVehicles()) {
         optimize = solver_->MakeGuidedLocalSearch(

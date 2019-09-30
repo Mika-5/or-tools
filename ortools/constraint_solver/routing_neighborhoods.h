@@ -389,6 +389,93 @@ class RelocateExpensiveChain : public PathOperator {
   bool has_non_empty_paths_to_explore_;
 };
 
+
+// Operator which exchanges the position of two lists; for both lists the
+// order of the nodes needs to be kept the same on the same path.
+// Possible neighbors for the paths 1 -> A -> B -> C -> 2 -> 3 and 4 -> D -> E -> F -> G -> 5
+// (where (1, 3) and (4, 5) are first and last nodes of the paths and can
+// therefore not be moved, and (A,B,C) and (D,E,F,G) are lists of nodes):
+//   1 -> D -> E -> F -> G-> 2 -> 3, 4 -> [A] -> [B]-> [C] -> 5
+class ListExchangeRelocateOperator : public PathWithPreviousNodesOperator {
+ public:
+  ListExchangeRelocateOperator(const std::vector<IntVar*>& vars,
+                       const std::vector<IntVar*>& secondary_vars,
+                       std::function<int(int64)> start_empty_path_class,
+                       const std::vector<int64> periodic_visits);
+  ~ListExchangeRelocateOperator() override {}
+
+
+  bool MakeNeighbor() override;
+
+  bool LoadAndCheckDest(int node,
+                        int64 base_node,
+                        int64 nodes[2],
+                        int64 dest[2]);
+
+  bool MoveNode(int node, int64 nodes[2], int64 dest[2],
+                int64 prev[2]);
+  // std::string DebugString() const override { return "PairExchangeOperator"; }
+
+ private:
+  // bool RestartAtPathStartOnSynchronize() override { return true; }
+  bool GetPreviousAndSibling(int64 node, int64* previous, int64* sibling,
+                             int64* sibling_previous) const;
+
+  std::vector<int> pairs_; 
+  int frequency_;
+  std::vector<bool> is_first_;
+};
+
+// ----- TransformPeriodic -----
+// Operator which relocates the most expensive subchains (given a cost callback)
+// in a path to a different position.
+// The most expensive chain on a path is the one resulting from cutting the 2
+// most expensive arcs on this path.
+// class TransformPeriodic : public PathOperator {
+//  public:
+//   TransformPeriodic(
+//       const std::vector<IntVar*>& vars,
+//       const std::vector<IntVar*>& secondary_vars,
+//       std::function<int(int64)> start_empty_path_class,
+//       int num_arcs_to_consider,
+//       std::function<int64(std::vector<int64>, std::vector<int64>, std::vector<int64>)> arc_cost_for_paths_periodic);
+//   ~TransformPeriodic() override {}
+//   bool MakeNeighbor() override;
+
+//   // bool MakeOneNeighbor() override;
+
+//   std::string DebugString() const override { return "TransformPeriodic"; }
+
+//  private:
+//   // void OnNodeInitialization() override;
+//   // void IncrementCurrentPath();
+//   // bool IncrementCurrentArcIndices();
+//   // Returns false if current_path_ is empty. Otherwise sets
+//   // current_expensive_chain_ to the pair of {"preceding", "last"} nodes
+//   // corresponding to the most expensive chain on current_path_, and returns
+//   // true.
+//   // bool FindMostExpensiveChainsOnCurrentPath();
+//   // Calls FindMostExpensiveChainOnCurrentPath() on remaining paths until one
+//   // of them returns true. Returns false if all remaining paths are empty.
+//   // bool FindMostExpensiveChainsOnRemainingPaths();
+
+//   int num_arcs_to_consider_;
+//   int current_path_;
+//   std::vector<std::pair<int64, int> > most_expensive_arc_starts_and_ranks_;
+//   // Indices in most_expensive_arc_starts_and_ranks_ corresponding to the first
+//   // and second arcs currently being considered for removal.
+//   std::pair</*first_arc_index*/ int, /*second_arc_index*/ int>
+//       current_expensive_arc_indices_;
+//   std::function<int64(/*before_node*/ int64, /*after_node*/ int64,
+//                       /*path_start*/ int64)>
+//       arc_cost_for_path_start_;
+//   int end_path_;
+//   // The following boolean indicates if there are any non-empty paths left to
+//   // explore by the operator.
+//   bool has_non_empty_paths_to_explore_;
+//   std::function<int64(std::vector<int64>, std::vector<int64>, std::vector<int64>)> arcs_cost_for_paths_periodic_;
+// };
+
 // Operator which inserts pairs of inactive nodes into a path and makes an
 // active node inactive.
 // There are two versions:
